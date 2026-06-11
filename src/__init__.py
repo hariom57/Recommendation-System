@@ -1,1 +1,1 @@
-# Package initialization
+# Netflix Recommendation System — source package

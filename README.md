@@ -1,62 +1,179 @@
-# Production Netflix Recommendation Engine
+# Netflix Recommendation System
 
-An end-to-end, object-oriented recommendation system built using the Netflix Prize dataset architecture, showcasing SDE and ML engineering standards.
+An end-to-end recommendation engine built on the **Netflix Prize dataset** (~100M ratings), implementing two collaborative filtering approaches with full evaluation on RMSE and MAP@10.
 
-## System Architecture Diagram
-```mermaid
-graph TD
-    A[Raw Netflix Data] --> B(DataProcessor: Downsample & Temporal Split)
-    B --> C{Train/Test Sets}
-    C --> D[NetflixEDA: Metrics & Distribution]
-    C --> E[ItemBasedCF Model]
-    C --> F[MatrixFactorizationSVD Model]
-    E --> G[Evaluator: RMSE & MAP@10]
-    F --> G
-    F --> H[FastAPI Endpoint: /api/v1/recommend]
-    H --> I[ExplanationEngine]
-    H --> J[Cold-Start Fallback Router]
+## System Architecture
+
+```
+Raw Netflix Data (100M ratings)
+        │
+        ▼
+ DataProcessor
+  ├── parse_raw_files()
+  ├── downsample_data()        ← iterative co-filtering
+  └── temporal_split()         ← no leakage
+
+        │
+   ┌────┴────┐
+ train      test
+   │
+   ├──► ItemBasedCF             ► MAP@10 (ranking quality)
+   │     └── cosine similarity
+   │
+   └──► MatrixFactorizationSVD  ► RMSE (rating accuracy)
+         └── Funk SGD
+
+        │
+        ▼
+   Evaluator
+    ├── RMSE
+    └── MAP@10
+
+        │
+        ▼
+   FastAPI  /api/v1/recommend
+    ├── SVD endpoint
+    ├── CF endpoint
+    └── Cold-start fallback
 ```
 
-## Setup & Reproduction Guide
+## Quick Start
 
-### 1. Environment Setup
-Create a virtual environment and install dependencies:
+### 1. Setup
+
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+git clone https://github.com/hariom57/Recommendation-System
+cd Recommendation-System
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Running EDA & Pipeline Validation
-The data pipeline and EDA engine can be executed by integrating the modules in a script or Jupyter notebook:
-```python
-from src.data_processing import DataProcessor
-from src.eda import NetflixEDA
+### 2. Download the Netflix Prize Dataset
 
-dp = DataProcessor()
-df = dp.generate_simulated_data()
-df_dense = dp.downsample_data(df)
+See `data/README.md` for full instructions. Short version:
 
-eda = NetflixEDA()
-stats = eda.run_full_analysis(df_dense)
-print(stats)
+```bash
+pip install kaggle
+kaggle datasets download -d netflix-inc/netflix-prize-data
+unzip netflix-prize-data.zip -d data/netflix-prize-data/
 ```
 
-### 3. Starting the Production Server
-Run the FastAPI application locally:
+### 3. Train Both Models
+
+```bash
+python train_pipeline.py
+# Options:
+#   --max-rows 5000000   load only 5M rows (default) — fast on a laptop
+#   --svd-only           skip ItemBasedCF training
+#   --cf-only            skip SVD training
+```
+
+This will:
+- Parse the raw data and cache it as parquet
+- Downsample to a dense sub-matrix
+- Perform a temporal train/test split
+- Train ItemBasedCF → `models/item_cf.joblib`
+- Train MatrixFactorizationSVD → `models/svd.joblib`
+- Print RMSE and MAP@10 side-by-side
+- Save results to `reports/evaluation_results.csv`
+
+### 4. Run the EDA Notebook
+
+```bash
+jupyter notebook notebooks/eda_netflix.ipynb
+```
+
+### 5. Start the API
+
 ```bash
 python app.py
+# or: uvicorn app:app --reload
 ```
-The API documentation will be available at `http://localhost:8000/docs`.
 
-## Structural Tradeoffs: MF vs. CF
+API docs at `http://localhost:8000/docs`
 
-### Matrix Factorization (Funk SVD)
-- **Strengths:** Excellent at minimizing **RMSE** globally. Captures latent user tastes and item attributes gracefully even with sparse data. Computationally fast at inference time.
-- **Weaknesses:** Loses interpretability. Hard to explain exactly *why* a movie was recommended compared to item-based methods.
-- **Metric Focus:** **RMSE** (Root Mean Squared Error) is optimized via Stochastic Gradient Descent.
+Example request:
+```bash
+curl -X POST http://localhost:8000/api/v1/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": 12345, "top_k": 10, "model": "svd"}'
+```
 
-### Item-Based Collaborative Filtering
-- **Strengths:** High explainability and logical recommendations. Very effective at optimizing ranking metrics like **MAP@10**.
-- **Weaknesses:** High computational cost at scale due to the $O(|I|^2)$ item-similarity matrix calculation. Struggles with complete cold-start items.
-- **Metric Focus:** **MAP@10** (Mean Average Precision @ 10). It ranks structurally similar items effectively.
+### 6. Re-evaluate Models (standalone)
+
+```bash
+python evaluate_models.py --k 10 --test-sample 100000
+```
+
+---
+
+## Model Comparison
+
+| Model | Optimises | Inference cost | Explainability |
+|---|---|---|---|
+| **MatrixFactorizationSVD** (Funk SVD) | **RMSE** | O(K) | Low |
+| **ItemBasedCF** | **MAP@10** | O(K·N_rated) | High |
+
+### MatrixFactorizationSVD
+- Learns low-rank user and item embedding matrices via SGD
+- Incorporates user bias, item bias, and global mean
+- Fast at inference: just a dot product
+- Better generalises to sparse users
+
+### ItemBasedCF
+- Pre-computes item-item cosine similarity
+- Predictions are similarity-weighted averages of rated neighbours
+- Highly explainable: "because you liked X, you'll like Y"
+- Expensive to compute similarity matrix at scale (O(|I|²))
+
+---
+
+## Project Structure
+
+```
+Recommendation-System/
+├── app.py                    ← FastAPI server (fixed: lifespan, joblib.load)
+├── train_pipeline.py         ← End-to-end training script (NEW)
+├── evaluate_models.py        ← Standalone evaluation script (NEW)
+├── requirements.txt
+├── data/
+│   ├── README.md             ← Dataset download instructions (NEW)
+│   └── netflix-prize-data/   ← Place raw files here (not committed)
+│       ├── combined_data_1.txt
+│       ├── ...
+│       └── movie_titles.csv
+├── src/
+│   ├── __init__.py
+│   ├── data_processing.py    ← Fixed: real Netflix data, temporal split
+│   ├── eda.py                ← Fixed: full matplotlib/seaborn plots
+│   ├── models.py             ← Fixed: trained models with joblib save/load
+│   ├── evaluate.py           ← NEW: RMSE + MAP@10
+│   └── explain.py            ← Fixed: real movie name lookup
+├── notebooks/
+│   └── eda_netflix.ipynb     ← NEW: full EDA with visualisations
+├── models/                   ← Saved model files (not committed)
+│   ├── svd.joblib
+│   └── item_cf.joblib
+└── reports/
+    ├── evaluation_results.csv
+    └── figures/              ← Generated plots
+```
+
+---
+
+## Deliverables Checklist
+
+| Requirement | Status |
+|---|---|
+| Uses Netflix Prize Dataset | ✅ Real data, `DataProcessor.load_data()` |
+| EDA with visualisations | ✅ `notebooks/eda_netflix.ipynb` + `src/eda.py` |
+| RMSE on real test split | ✅ `evaluate_models.py` + `src/evaluate.py` |
+| MAP@10 on real test split | ✅ `evaluate_models.py` + `src/evaluate.py` |
+| ≥ 2 models compared | ✅ ItemBasedCF vs MatrixFactorizationSVD |
+| Trained models saved to disk | ✅ `joblib.dump()` in `models/` |
+| Models loaded in API | ✅ `joblib.load()` in `app.py` lifespan |
+| Top-K recommendation demo | ✅ `/api/v1/recommend` endpoint |
+| Cold-start handling | ✅ Falls back to popularity-based list |
+| Explanation engine | ✅ `src/explain.py` |
+| FastAPI deprecation fixed | ✅ Uses `lifespan` context manager |
+| GitHub reproducibility | ✅ This README |

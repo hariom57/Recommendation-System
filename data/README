@@ -1,0 +1,51 @@
+# Data Directory
+
+## Netflix Prize Dataset
+
+This project requires the **Netflix Prize dataset** from Kaggle.
+
+### Download Instructions
+
+1. Install the Kaggle CLI:
+   ```bash
+   pip install kaggle
+   ```
+
+2. Set up your Kaggle API credentials:  
+   - Go to https://www.kaggle.com/settings → "API" → "Create New Token"
+   - Save `kaggle.json` to `~/.kaggle/kaggle.json`
+   - Run `chmod 600 ~/.kaggle/kaggle.json`
+
+3. Download and unzip:
+   ```bash
+   kaggle datasets download -d netflix-inc/netflix-prize-data
+   unzip netflix-prize-data.zip -d data/netflix-prize-data/
+   ```
+
+4. Your `data/` directory should look like:
+   ```
+   data/
+   └── netflix-prize-data/
+       ├── combined_data_1.txt   (~500 MB)
+       ├── combined_data_2.txt   (~500 MB)
+       ├── combined_data_3.txt   (~500 MB)
+       ├── combined_data_4.txt   (~500 MB)
+       └── movie_titles.csv      (~300 KB)
+   ```
+
+### Dataset Statistics
+
+| Property | Value |
+|---|---|
+| Total ratings | ~100 million |
+| Unique users | ~480,000 |
+| Unique movies | ~17,770 |
+| Rating scale | 1–5 stars |
+| Date range | October 1998 – December 2005 |
+| File format | Custom text (movie_id: header, then user_id,rating,date rows) |
+
+### Notes
+
+- The raw files are **not** committed to this repository (too large for GitHub).
+- After first load, the `DataProcessor` caches a parquet file at `data/processed/ratings_raw.parquet` for fast subsequent loading.
+- The `data/processed/` folder is also git-ignored; regenerate it by running `train_pipeline.py`.

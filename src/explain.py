@@ -1,27 +1,56 @@
 """
-Explainability engine to provide human-readable justifications for recommendations.
+ExplanationEngine: generates human-readable recommendation explanations.
 """
 
-from typing import Dict, Any
+import logging
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+_MOVIE_CACHE: Optional[dict] = None
+
+
+def _load_movie_map() -> dict:
+    global _MOVIE_CACHE
+    if _MOVIE_CACHE is not None:
+        return _MOVIE_CACHE
+    titles_path = Path("data/netflix-prize-data/movie_titles.csv")
+    if titles_path.exists():
+        df = pd.read_csv(
+            titles_path,
+            encoding="latin-1",
+            header=None,
+            names=["item_id", "year", "title"],
+        )
+        _MOVIE_CACHE = dict(zip(df["item_id"].astype(int), df["title"].str.strip()))
+    else:
+        _MOVIE_CACHE = {}
+    return _MOVIE_CACHE
+
 
 class ExplanationEngine:
-    def __init__(self, item_metadata: Dict[int, str] = None):
-        self.item_metadata = item_metadata or {}
+    """Generates textual explanations for recommendations."""
 
     def get_movie_name(self, item_id: int) -> str:
-        return self.item_metadata.get(item_id, f"Movie {item_id}")
+        movie_map = _load_movie_map()
+        return movie_map.get(item_id, f"Movie #{item_id}")
 
-    def generate_cf_explanation(self, user_id: int, rec_item_id: int, sim_score: float, trigger_item_id: int) -> str:
-        """Generate explanation for Collaborative Filtering based recommendations."""
-        rec_name = self.get_movie_name(rec_item_id)
-        trigger_name = self.get_movie_name(trigger_item_id)
-        pct = min(99, int(sim_score * 100))
-        
-        return (f"Recommended '{rec_name}' because you rated '{trigger_name}' highly, "
-                f"which has a {pct}% structural similarity score.")
+    def generate_mf_explanation(self, user_id: int, item_id: int, score: float) -> str:
+        title = self.get_movie_name(item_id)
+        confidence = "strongly" if score >= 4.5 else "moderately" if score >= 3.5 else "slightly"
+        return (
+            f"Based on your viewing history, our model {confidence} predicts you will "
+            f"enjoy '{title}' (predicted rating: {score:.2f}/5.0). "
+            "This is derived from latent taste patterns shared with similar users."
+        )
 
-    def generate_mf_explanation(self, user_id: int, rec_item_id: int, predicted_rating: float) -> str:
-        """Generate explanation for Matrix Factorization based recommendations."""
-        rec_name = self.get_movie_name(rec_item_id)
-        return (f"Recommended '{rec_name}' because our latent feature model matches "
-                f"it strongly with your taste profile (predicted rating: {predicted_rating:.1f}/5.0).")
+    def generate_cf_explanation(self, user_id: int, item_id: int, similar_items: list) -> str:
+        title = self.get_movie_name(item_id)
+        neighbours = ", ".join(f"'{self.get_movie_name(i)}'" for i in similar_items[:3])
+        return (
+            f"'{title}' is recommended because users who enjoyed {neighbours} "
+            "also gave it high ratings — it shares strong structural similarities with your favourites."
+        )
